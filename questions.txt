@@ -1,0 +1,50 @@
+Hi,
+I am not able to login to the platform since morning. It is showing some error. Please check.
+
+---
+
+Please find the details below:
+
+Platform Name / Environment:
+I am using the CRM Portal in Production
+Error Details:
+When I try to login, it shows this error: “Session expired. Please login again.”
+I have attached a screenshot as well.
+Steps to Reproduce:
+Open the CRM login page
+Enter my username and password
+Click on login
+It redirects back to login page with the error
+Impact Scope:
+This seems to be happening only for me. My teammates are able to login.
+
+--------------------------------------------------------------------------------------------------------------------
+
+Hi,
+
+I am not able to login to the CRM Portal in Production since this morning.
+
+Error Details: "Session expired. Please login again." appears immediately after clicking the login button.
+
+Steps to Reproduce:
+When I open the CRM login page, I enter my username and password and click Login. It redirects back to the login page with the error above.
+
+Impact Scope: I am the only one facing this — my teammates are able to login without any issues.
+
+Please help resolve this at the earliest.
+
+
+-----------------------------------------------------------------------------------------------------------------------
+
+Dashboard not loading
+
+---
+
+Platform: Analytics Portal in Production
+Error: The dashboard shows a blank screen with no data loading. No error message displayed.
+Steps to Reproduce: When I open the Analytics Portal and navigate to the dashboard, the widgets show a loading spinner indefinitely and never load data.
+Impact Scope: I am the only one affected. My teammates can see the dashboard fine.
+
+
+
+
