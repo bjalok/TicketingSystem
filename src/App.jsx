@@ -56,6 +56,12 @@ const scenarioLibrary = [
     scenario: "Notification / Email Delivery Failure",
     sop: "SOP #18",
     solution: "This matches a known notification delivery issue. Based on SOP #18 — Alert & Email Delivery SOP:\n\n**Recommended Resolution Steps:**\n1. Verify the user's notification preferences are enabled under Profile → Notification Settings.\n2. Check if the sending domain (noreply@company.com) is whitelisted in the user's email client.\n3. Trigger a test notification from Admin → Users → Send Test Alert to confirm delivery.\n4. If delivery fails, flush the notification queue via Admin → System → Notification Queue → Retry Failed.\n5. Escalate to the Messaging Infrastructure team if retries fail after 2 attempts.\n\n**Root Cause (likely):** Notification preference reset after platform upgrade or email provider spam filter blocking."
+  },
+  {
+    keywords: /(kubernetes|k8s|pod.*crash|crashloopbackoff|crash.?loop|container.*restart|pod.*restart|oom.?kill|pod.*fail|namespace.*crash|replica.*crash|deployment.*fail)/i,
+    scenario: "Kubernetes Pod CrashLoopBackOff",
+    sop: "SOP #71",
+    solution: "This matches a known Kubernetes pod failure issue. Based on SOP #71 — Pod CrashLoopBackOff:\n\n**Recommended Resolution Steps:**\n1. Check pod status: `kubectl get pods -n <namespace>` and identify the failing pods.\n2. View pod logs: `kubectl logs <pod-name> -n <namespace> --previous` to see the last crash output.\n3. Describe the pod for events: `kubectl describe pod <pod-name> -n <namespace>` — look for OOMKilled, ImagePullBackOff, or config errors.\n4. Check recent deployments: `kubectl rollout history deployment/<deployment-name> -n <namespace>`.\n5. If caused by a bad deployment, rollback: `kubectl rollout undo deployment/<deployment-name> -n <namespace>`.\n\n**Root Cause (likely):** Recent deployment introduced a configuration error, missing environment variable, or memory limit breach causing OOMKill."
   }
 ];
 const matchScenario = (text) => { for (const s of scenarioLibrary) { if (s.keywords.test(text)) return s; } return null; };
@@ -88,7 +94,8 @@ const escalationRoutes = {
   "Dashboard / App Not Loading": { department: "Backend / Application Support", agent: "Neha Singh", agentTitle: "App Support Engineer", eta: "2 hours" },
   "User Authentication Failure": { department: "Identity & Access Management", agent: "Raj Mehta", agentTitle: "IAM Engineer", eta: "2 hours" },
   "Permission / Access Denied": { department: "Identity & Access Management", agent: "Priya Sharma", agentTitle: "Access Control Specialist", eta: "2 hours" },
-  "Performance Degradation": { department: "Platform Engineering", agent: "Arjun Nair", agentTitle: "SRE Engineer", eta: "4 hours" }
+  "Performance Degradation": { department: "Platform Engineering", agent: "Arjun Nair", agentTitle: "SRE Engineer", eta: "4 hours" },
+  "Kubernetes Pod CrashLoopBackOff": { department: "Platform Engineering / SRE", agent: "Arjun Nair", agentTitle: "SRE Engineer", eta: "1 hour" }
 };
 const defaultEscalation = { department: "L2 Support", agent: "Amit Verma", agentTitle: "Senior Support Engineer", eta: "4 hours" };
 
@@ -118,6 +125,12 @@ const generateContextualFields = (description, missingFields) => {
     "SFLOCK_Browser": { label: "Browser & Environment",  hint: "Which browser (Chrome/Edge/Firefox) and OS are you using to access Snowflake? Are you on the web UI or SnowSQL CLI?" },
     "SFLOCK_Steps":   { label: "Steps to Reproduce",     hint: "Walk us through exactly what happened — what URL/method you used to log in and at what step the lockout error appeared." },
     "SFLOCK_Impact":  { label: "Impact",                  hint: "Is this affecting only your account, or are other team members also locked out? Is any critical pipeline or workflow blocked?" },
+  };
+
+  const k8sFieldMap = {
+    "K8S_Namespace":    { label: "Namespace & Pod Name",        hint: "Which Kubernetes namespace and pod(s) are affected? (e.g., payments-service namespace, pod names like payments-api-xxxxx)" },
+    "K8S_ErrorLogs":    { label: "Error Logs / Exit Code",      hint: "What do the pod logs show? Run `kubectl logs <pod> -n <namespace> --previous` and share the last error output or exit code." },
+    "K8S_Deployment":   { label: "Recent Deployment Changes",   hint: "Were there any recent deployments, config changes, or image updates to this service? Check `kubectl rollout history deployment/<name> -n <namespace>`." },
   };
 
   const salesforceFieldMap = {
@@ -159,6 +172,7 @@ const generateContextualFields = (description, missingFields) => {
   };
 
   return missingFields.map(f => {
+    if (k8sFieldMap[f]) return { key: f, ...k8sFieldMap[f] };
     if (snowflakeLockFieldMap[f]) return { key: f, ...snowflakeLockFieldMap[f] };
     if (salesforceFieldMap[f]) return { key: f, ...salesforceFieldMap[f] };
     if (snowflakeFieldMap[f]) return { key: f, ...snowflakeFieldMap[f] };
@@ -169,6 +183,15 @@ const generateContextualFields = (description, missingFields) => {
 
 const analyzeTicketDescription = (description) => {
   const lowercaseDesc = description.toLowerCase();
+
+  // Kubernetes CrashLoopBackOff enrichment path
+  if (/kubernetes|k8s|pod.*crash|crashloopbackoff|crash.?loop|container.*restart|pod.*restart|oom.?kill|pod.*fail|namespace.*crash|replica.*crash|deployment.*fail/i.test(lowercaseDesc)) {
+    const missing = [];
+    if (!/pod.?name\s*[:=]|namespace\s*[:=]|kubectl.*-n\s+\w/i.test(lowercaseDesc)) missing.push("K8S_Namespace");
+    if (!/log|exit.?code|oom|error.*message|stack.?trace|exception|signal|killed|segfault/i.test(lowercaseDesc)) missing.push("K8S_ErrorLogs");
+    if (!/deploy|rollout|image|config.?change|helm|manifest|update|version|release/i.test(lowercaseDesc)) missing.push("K8S_Deployment");
+    return { isComplete: missing.length === 0, missingFields: missing, confidence: 100 - (missing.length * 33) };
+  }
 
   // Salesforce API-specific enrichment path
   if (/salesforce.*api|api.*salesforce|salesforce.*integration|integration.*failing|api.*failing|intermittent.*api/i.test(lowercaseDesc)) {
