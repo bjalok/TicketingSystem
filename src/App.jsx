@@ -212,7 +212,7 @@ const App = () => {
   const [view, setView] = useState('list');
   const [replyText, setReplyText] = useState('');
   const [form, setForm] = useState({
-    email: 'shivan.gupta@company.com',
+    email: 'Shubham Gupta',
     description: '',
     category: 'Software',
     subcategory: 'Application',
@@ -323,7 +323,7 @@ const App = () => {
     };
     setTickets([newTicket, ...tickets]);
     setSubmittedTicket(newTicket);
-    setForm({ email: 'Shivan Gupta', description: '', category: 'Software', subcategory: 'Application', impact: '2 - Medium', urgency: '2 - Medium', contactType: 'Self-service', assignmentGroup: 'IT Service Desk' });
+    setForm({ email: 'Shubham Gupta', description: '', category: 'Software', subcategory: 'Application', impact: '2 - Medium', urgency: '2 - Medium', contactType: 'Self-service', assignmentGroup: 'IT Service Desk' });
     const ticketId = newTicket.id;
     setThinkingTicketId(ticketId);
     setTimeout(() => { setThinkingTicketId(null); processAIEnrichment(ticketId, newTicket.description); }, 3000);
