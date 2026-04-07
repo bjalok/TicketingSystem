@@ -16,6 +16,12 @@ const scenarioLibrary = [
     solution: "This matches a known Salesforce API integration issue. Based on SOP #62 — API Integration Failure:\n\n**Recommended Resolution Steps:**\n1. Check Salesforce API limits under Setup → System Overview → API Usage.\n2. Review the integration tool logs for HTTP status codes (429 = rate limit, 401 = auth, 500 = server error).\n3. If hitting API limits, implement request batching or increase API limit allocation.\n4. Re-authenticate the connected app OAuth token if seeing 401 errors.\n5. Check Salesforce Trust Status page for any active platform incidents.\n\n**Root Cause (likely):** API rate limit exhaustion or OAuth token expiry causing intermittent failures."
   },
   {
+    keywords: /(snowflake.*lock|locked.*snowflake|snowflake.*account.*lock|unable.*log.*snowflake|snowflake.*login|snowflake.*sign.?in|snowflake.*failed.*login|snowflake.*multiple.*failed)/i,
+    scenario: "Snowflake Account Lockout",
+    sop: "SOP #58",
+    solution: "This matches a known Snowflake account lockout issue. Based on SOP #58 — Account Lockout & Login Failure:\n\n**Recommended Resolution Steps:**\n1. A Snowflake admin can unlock the account via: `ALTER USER <username> SET MINS_TO_UNLOCK=0;`\n2. Reset the password: `ALTER USER <username> RESET PASSWORD;`\n3. If using SSO/SAML, verify the IdP session is valid and the user's role is active.\n4. Check login history: `SELECT * FROM SNOWFLAKE.ACCOUNT_USAGE.LOGIN_HISTORY WHERE USER_NAME = '<username>' ORDER BY EVENT_TIMESTAMP DESC LIMIT 20;`\n5. Review IP whitelist/network policy if lockout is caused by an unknown IP.\n\n**Root Cause (likely):** Multiple failed login attempts triggering Snowflake's account lockout policy."
+  },
+  {
     keywords: /(snowflake|warehouse.*queue|query.*queue|queries.*queue|queries.*slow|snowflake.*slow|snowflake.*taking too long|queued.*long|long.*queue)/i,
     scenario: "Snowflake Query Performance",
     sop: "SOP #55",
@@ -77,6 +83,7 @@ const matchPastResolution = (text) => { for (const r of pastResolutions) { if (r
 // ========== Escalation Routing ==========
 const escalationRoutes = {
   "Salesforce API Integration Failure": { department: "Integration & API Support", agent: "Kavya Reddy", agentTitle: "Integration Engineer", eta: "2 hours" },
+  "Snowflake Account Lockout": { department: "Identity & Access Management", agent: "Raj Mehta", agentTitle: "IAM Engineer", eta: "1 hour" },
   "Snowflake Query Performance": { department: "Data Platform Engineering", agent: "Vikram Sethi", agentTitle: "Data Engineer", eta: "1 hour" },
   "Dashboard / App Not Loading": { department: "Backend / Application Support", agent: "Neha Singh", agentTitle: "App Support Engineer", eta: "2 hours" },
   "User Authentication Failure": { department: "Identity & Access Management", agent: "Raj Mehta", agentTitle: "IAM Engineer", eta: "2 hours" },
@@ -106,6 +113,12 @@ const generateContextualFields = (description, missingFields) => {
   const isLoading = /not loading|won't load|fails to load|blank|spinning|hangs|timeout/i.test(lowercaseDesc);
   const isLogin = /login|sign.?in|password|credentials|authentication|access denied/i.test(lowercaseDesc);
   const isPerf = /slow|performance|lag|latency|response time/i.test(lowercaseDesc);
+
+  const snowflakeLockFieldMap = {
+    "SFLOCK_Browser": { label: "Browser & Environment",  hint: "Which browser (Chrome/Edge/Firefox) and OS are you using to access Snowflake? Are you on the web UI or SnowSQL CLI?" },
+    "SFLOCK_Steps":   { label: "Steps to Reproduce",     hint: "Walk us through exactly what happened — what URL/method you used to log in and at what step the lockout error appeared." },
+    "SFLOCK_Impact":  { label: "Impact",                  hint: "Is this affecting only your account, or are other team members also locked out? Is any critical pipeline or workflow blocked?" },
+  };
 
   const salesforceFieldMap = {
     "SFDC_ErrorCode":        { label: "Error message or status codes?",  hint: "What error message or HTTP status code is the integration returning? (e.g., 429 Too Many Requests, 401 Unauthorized, 500 Server Error)" },
@@ -146,6 +159,7 @@ const generateContextualFields = (description, missingFields) => {
   };
 
   return missingFields.map(f => {
+    if (snowflakeLockFieldMap[f]) return { key: f, ...snowflakeLockFieldMap[f] };
     if (salesforceFieldMap[f]) return { key: f, ...salesforceFieldMap[f] };
     if (snowflakeFieldMap[f]) return { key: f, ...snowflakeFieldMap[f] };
     const generator = fieldMap[f];
@@ -166,15 +180,22 @@ const analyzeTicketDescription = (description) => {
     return { isComplete: missing.length === 0, missingFields: missing, confidence: 100 - (missing.length * 25) };
   }
 
-  // Snowflake-specific enrichment path
+  // Snowflake Account Lockout enrichment path (must come before general Snowflake)
+  if (/snowflake.*lock|locked.*snowflake|snowflake.*account.*lock|unable.*log.*snowflake|snowflake.*login|snowflake.*sign.?in|snowflake.*failed.*login|snowflake.*multiple.*failed/i.test(lowercaseDesc)) {
+    const missing = [];
+    if (!/chrome|firefox|edge|safari|using.*browser|on.*browser|environment.*prod|environment.*staging|mac os|windows 1/i.test(lowercaseDesc)) missing.push("SFLOCK_Browser");
+    if (!/step \d|when i (click|open|go|navigate|try|press|submit|enter|select)|following steps|to reproduce|i first|i then/i.test(lowercaseDesc)) missing.push("SFLOCK_Steps");
+    if (!/only (me|my account)|just (me|my)|whole team|all users|affecting (all|everyone|team)|other (users|members)|(\d+) (users|people)|i('m| am) the only/i.test(lowercaseDesc)) missing.push("SFLOCK_Impact");
+    return { isComplete: missing.length === 0, missingFields: missing, confidence: 100 - (missing.length * 33) };
+  }
+
+  // Snowflake query performance enrichment path
   if (/snowflake|warehouse.*queue|queries.*queue|queries.*slow|queued.*long/i.test(lowercaseDesc)) {
     const missing = [];
-    if (!/warehouse/i.test(lowercaseDesc)) missing.push("SF_Warehouse");
-    if (!/queue|running immediately|immediate/i.test(lowercaseDesc)) missing.push("SF_QueueStatus");
-    if (!/size|x-small|small|medium|large|x-large|2x-large|3x-large|auto.?scal/i.test(lowercaseDesc)) missing.push("SF_WarehouseSize");
-    if (!/recent|increase|spike|workload|more jobs|more users|new pipeline/i.test(lowercaseDesc)) missing.push("SF_WorkloadChange");
-    if (!/business|impact|sla|deadline|critical|urgent|blocking|revenue/i.test(lowercaseDesc)) missing.push("SF_BusinessImpact");
-    return { isComplete: missing.length === 0, missingFields: missing, confidence: 100 - (missing.length * 20) };
+    if (!/chrome|firefox|edge|safari|using.*browser|on.*browser|environment.*prod|environment.*staging|snowsql|cli/i.test(lowercaseDesc)) missing.push("SFLOCK_Browser");
+    if (!/step \d|when i (click|open|go|navigate|try|press|submit|enter|select|run|execute)|following steps|to reproduce/i.test(lowercaseDesc)) missing.push("SFLOCK_Steps");
+    if (!/only (me|my account)|just (me|my)|whole team|all users|affecting (all|everyone|team)|other (users|members)|(\d+) (users|people)|i('m| am) the only/i.test(lowercaseDesc)) missing.push("SFLOCK_Impact");
+    return { isComplete: missing.length === 0, missingFields: missing, confidence: 100 - (missing.length * 33) };
   }
 
   const hasPlatform = /(windows|mac os|linux|ios|android|chrome|firefox|safari|salesforce|jira|slack|zoom|outlook|teams app|azure|aws|gcp|production|staging|dev environment|sandbox)/i.test(lowercaseDesc);
